@@ -419,11 +419,9 @@ jobs:
           help/
 
   build-android:
-    name: Build Android App (db48x)
+    name: Build Android App (db48x) APK
     runs-on: ubuntu-latest
-    env:
-      ANDROID_KEYSTORE_DATA: ${{ secrets.ANDROID_KEYSTORE_DATA }}
-
+    
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -457,44 +455,42 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libfreetype6-dev pkg-config
 
-    - name: Build Android App Bundle
+    - name: Generar Keystore local temporal
+      run: |
+        mkdir -p $HOME/.local
+        keytool -genkey -v -keystore $HOME/.local/android_release.keystore -alias db48x_alias -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=DB48X, OU=Test, O=Test, L=Test, S=Test, C=US"
+        echo "ANDROID_KEYSTORE_DATA_EXISTS=true" >> $GITHUB_ENV
+
+    - name: Build Android App (APK)
       run: |
         echo "${{ github.run_number }}" > .build_id
         export ANDROID_SDK_ROOT=$ANDROID_HOME
         export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125
+        
+        # Eliminar el parámetro --aab del Makefile para forzar la salida en APK
+        sed -i 's/--aab//g' Makefile
+        
         # Generate version.h, qrc files, and recorder config
         make src/dmcp/version.h
         make sim/config.qrc sim/state.qrc sim/library.qrc sim/help.qrc sim/help/img.qrc
         cd recorder && make TARGET=opt && cd ..
-        # Build Android app (signed if keystore available, unsigned otherwise)
-        if [ -n "$ANDROID_KEYSTORE_DATA" ]; then
-          mkdir -p $HOME/.local
-          echo "$ANDROID_KEYSTORE_DATA" | base64 -d > $HOME/.local/android_release.keystore
-          make android
-        else
-          cd sim && \
-            $QT_ROOT_DIR/bin/qmake -spec android-clang db48x.pro && \
-            make VARIANT=android && \
-            mkdir -p ../android/libs/arm64-v8a && \
-            cp libdb48x_arm64-v8a.so ../android/libs/arm64-v8a/ && \
-            $QT_HOST_PATH/bin/androiddeployqt \
-              --input android-db48x-deployment-settings.json \
-              --output ../android --gradle --aab
-        fi
+        
+        # Build Android app usando la clave que acabamos de generar
+        make android
       env:
-        ANDROID_KEYSTORE_PASS: ${{ secrets.ANDROID_KEYSTORE_PASS }}
+        ANDROID_KEYSTORE_PASS: '123456'
 
-    - name: List generated AAB files
+    - name: List generated APK files
       run: |
-        echo "Looking for AAB files in android directory:"
-        find android -name "*.aab" -type f 2>/dev/null || echo "No AAB files found"
+        echo "Looking for APK files in android directory:"
+        find android -name "*.apk" -type f 2>/dev/null || echo "No APK files found"
 
-    - name: Upload Android artifacts
+    - name: Upload Android APK artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: db48x-android
+        name: db48x-android-apk
         path: |
-          android/**/*.aab
+          android/**/*.apk
           help/
 
   build-color-android:
