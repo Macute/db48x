@@ -1,0 +1,80 @@
+name: Compilar APK Android (DB48X)
+
+# Solo se ejecutará cuando le demos al botón a mano
+on:
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Generar APK de Android
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 1. Clonar el código
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: 2. Configurar Java 17
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: 3. Instalar Qt 6.8.1 para Android
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: '6.8.1'
+        host: 'linux'
+        target: 'android'
+        arch: 'android_arm64_v8a'
+        modules: 'qtmultimedia'
+
+    - name: 4. Configurar Android SDK y NDK
+      uses: android-actions/setup-android@v3
+      
+    - name: Instalar NDK exacto que pide el proyecto
+      run: sdkmanager --install "ndk;26.1.10909125"
+
+    - name: 5. Instalar dependencias de Linux
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libfreetype6-dev pkg-config
+
+    - name: 6. Generar Keystore (Firma inventada)
+      run: |
+        mkdir -p $HOME/.local
+        keytool -genkey -v -keystore $HOME/.local/android_release.keystore -alias db48x_alias -keyalg RSA -keysize 2048 -validity 10000 -storepass 123456 -keypass 123456 -dname "CN=DB48X, OU=Test, O=Test, L=Test, S=Test, C=US"
+
+    - name: 7. Compilar la aplicación y empaquetar el APK
+      run: |
+        export ANDROID_SDK_ROOT=$ANDROID_HOME
+        export ANDROID_NDK_ROOT=$ANDROID_HOME/ndk/26.1.10909125
+        
+        # 7.1 Generar archivos internos de la app
+        make src/dmcp/version.h
+        make sim/config.qrc sim/state.qrc sim/library.qrc sim/help.qrc sim/help/img.qrc
+        cd recorder && make TARGET=opt && cd ..
+        
+        # 7.2 Compilar el código C++ con Qt
+        cd sim
+        $QT_ROOT_DIR/bin/qmake -spec android-clang db48x.pro
+        make VARIANT=android
+        
+        # 7.3 Mover la librería compilada a la carpeta de Android
+        mkdir -p ../android/libs/arm64-v8a
+        cp libdb48x_arm64-v8a.so ../android/libs/arm64-v8a/
+        
+        # 7.4 Generar el APK e inyectarle la firma
+        $QT_HOST_PATH/bin/androiddeployqt \
+          --input android-db48x-deployment-settings.json \
+          --output ../android \
+          --gradle \
+          --sign $HOME/.local/android_release.keystore db48x_alias \
+          --storepass 123456
+
+    - name: 8. Subir el APK final
+      uses: actions/upload-artifact@v4
+      with:
+        name: DB48X-Android-APK
+        path: android/**/*.apk
